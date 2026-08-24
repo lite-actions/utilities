@@ -1,0 +1,239 @@
+name: Unstick auto-merge
+
+# GitHub's auto-merge intermittently fails to fire. A PR that is approved,
+# passing and armed for auto-merge simply sits there: the run is green, nothing
+# errors, and the only evidence is an open PR nobody is watching.
+#
+# Seen on release-notes#26 on 2026-08-20 - approved at 14:11:51, armed at
+# 14:11:53, all checks green by 14:12:04, still open 95 minutes later. Ruled
+# out at the time: failing checks, missing approval, being behind main,
+# unsatisfied protection, an invalid CODEOWNERS file (the codeowners/errors
+# endpoint is clean on every repo). 28 of 29 changelog PRs merged in 12-29
+# seconds, so this is roughly 1 in 28.
+#
+# It is a known GitHub issue, reported since June 2024 with no acknowledged fix:
+# https://github.com/orgs/community/discussions/130262
+#
+# So this does not try to prevent it. It detects a PR that GitHub agreed was
+# ready and then failed to merge, and completes the merge itself.
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub's cron is best-effort and can be delayed under
+    # load, which does not matter here: a stuck PR stays stuck, so a late run
+    # still fixes it.
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      stall-minutes:
+        description: "Minutes open before a PR counts as stalled."
+        required: false
+        default: "15"
+      rehearse-pr:
+        description: >-
+          repo#number, e.g. release-notes#26. Sends the notification for that
+          PR and merges nothing. Exercises the diagnostics and Slack path,
+          which otherwise only runs when a real stall happens.
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unstick-auto-merge
+  cancel-in-progress: false
+
+jobs:
+  unstick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge PRs that auto-merge failed to merge
+        env:
+          # Needs to merge PRs across the org. public_repo is enough for the
+          # public action repos; a private repo would need full repo scope.
+          GH_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
+          # Optional. With no webhook the workflow still unsticks PRs; it just
+          # cannot tell anyone beyond the run log and the failed run.
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          ORG: lite-actions
+          # Normal is 12-29 seconds, so the default is ~30x the observed maximum.
+          STALL_MINUTES: ${{ inputs.stall-minutes || '15' }}
+          REHEARSE_PR: ${{ inputs.rehearse-pr }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::CHANGELOG_BOT_TOKEN is not set; cannot check for stalled PRs."
+            exit 1
+          fi
+
+          # Derived from the org, never hardcoded. A hardcoded list went stale
+          # when common-workflows was renamed, and had already been missing
+          # signed-commit entirely - a published repo excluded from a week of
+          # org-wide sweeps because it was not on a list someone maintained by
+          # hand. A sweep that cannot see a repository reports success, not
+          # absence.
+          #
+          # Public only, matching the token's public_repo scope: a private repo
+          # would 404 and turn a clean run into noise.
+          REPOS="$(gh repo list "${ORG}" --limit 100 --visibility public \
+            --json name --jq '.[].name' | tr '\n' ' ')"
+          if [ -z "${REPOS// /}" ]; then
+            echo "::error::Could not list repositories for ${ORG}."
+            exit 1
+          fi
+          echo "Checking: ${REPOS}"
+
+          # One notification per stalled PR, carrying what a diagnosis needs.
+          # Called after the merge attempt so the outcome can be reported, and
+          # re-fetches the PR itself so rehearsal mode can reuse it unchanged.
+          notify() {
+            local repo="$1" number="$2" outcome="$3"
+            local detail title url branch sha runs ready_at runs_text created method
+            local age_min ready_line text
+
+            detail="$(gh pr view "${number}" --repo "${ORG}/${repo}" \
+              --json title,url,headRefName,headRefOid,createdAt,autoMergeRequest 2>/dev/null)" || {
+              echo "::warning::could not read ${repo}#${number} for notification."
+              return 0
+            }
+            title="$(jq -r '.title' <<<"${detail}")"
+            url="$(jq -r '.url' <<<"${detail}")"
+            branch="$(jq -r '.headRefName' <<<"${detail}")"
+            sha="$(jq -r '.headRefOid' <<<"${detail}")"
+            created="$(jq -r '.createdAt' <<<"${detail}")"
+            method="$(jq -r '.autoMergeRequest.mergeMethod // "n/a"' <<<"${detail}")"
+            age_min=$(( ($(date -u +%s) - $(date -u -d "${created}" +%s)) / 60 ))
+
+            # The workflow runs on the head commit give the workflow name, the
+            # event that triggered it, and when each finished. The latest
+            # completion is the moment the PR actually became mergeable - the
+            # number that matters, since it is when the clock started.
+            runs="$(gh api "repos/${ORG}/${repo}/actions/runs?head_sha=${sha}&per_page=20" \
+              --jq '[.workflow_runs[] | {name, event, conclusion, updated_at}]' 2>/dev/null || echo '[]')"
+            ready_at="$(jq -r 'map(select(.conclusion != null) | .updated_at) | sort | last // ""' <<<"${runs}")"
+            runs_text="$(jq -r '.[] | "• \(.name) [\(.event)] \(.conclusion) at \(.updated_at)"' <<<"${runs}")"
+            [ -n "${runs_text}" ] || runs_text="• (no workflow runs found for this commit)"
+
+            if [ -n "${ready_at}" ]; then
+              ready_line="${ready_at} ($(( ($(date -u +%s) - $(date -u -d "${ready_at}" +%s)) / 60 ))m ago)"
+            else
+              ready_line="unknown"
+            fi
+
+            if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+              echo "SLACK_WEBHOOK_URL not set; skipping notification for ${repo}#${number}."
+              return 0
+            fi
+
+            text="$(printf '%s\n%s\n\n*Repository:* %s/%s\n*Branch:* %s\n*Commit:* %s\n*Opened:* %s (%sm ago)\n*Ready since:* %s\n*Merge method:* %s\n*Detected:* %s\n\n*Workflows on the head commit:*\n%s\n\n*Outcome:* %s' \
+              ":warning: *Auto-merge stalled* — <${url}|${ORG}/${repo}#${number}>" \
+              "${title}" \
+              "${ORG}" "${repo}" \
+              "${branch}" \
+              "${sha:0:8}" \
+              "${created}" "${age_min}" \
+              "${ready_line}" \
+              "${method}" \
+              "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+              "${runs_text}" \
+              "${outcome}")"
+
+            # Say so either way. A tool built because a silent success looked
+            # like a silent failure should not have that property itself.
+            if jq -n --arg t "${text}" '{text: $t}' \
+                 | curl -sf -X POST -H 'Content-type: application/json' \
+                   --data @- "${SLACK_WEBHOOK_URL}" >/dev/null; then
+              echo "Slack notified for ${repo}#${number} (ready since ${ready_line})."
+            else
+              echo "::warning::Slack notification failed for ${repo}#${number}."
+            fi
+          }
+
+          # Rehearsal: send the notification for one PR and merge nothing. The
+          # merge path only runs when a real stall happens, so without this the
+          # diagnostics and Slack path would ship untested.
+          if [ -n "${REHEARSE_PR:-}" ]; then
+            echo "Rehearsal for ${REHEARSE_PR} - nothing will be merged."
+            notify "${REHEARSE_PR%%#*}" "${REHEARSE_PR##*#}" \
+              ":test_tube: REHEARSAL - no merge was performed."
+            echo "Rehearsed a notification for ${REHEARSE_PR}; merged nothing." >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          now="$(date -u +%s)"
+          unstuck=0
+          checked=0
+
+          {
+            echo "# Unstick auto-merge"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          for repo in ${REPOS}; do
+            # A PR is a candidate only if auto-merge is already armed. That is an
+            # explicit decision that it should merge, made by whoever opened it,
+            # so completing it is not a judgement call.
+            while IFS=$'\t' read -r number created method state mergeable; do
+              [ -n "${number:-}" ] || continue
+              checked=$((checked + 1))
+
+              created_epoch="$(date -u -d "${created}" +%s)"
+              age_min=$(( (now - created_epoch) / 60 ))
+              [ "${age_min}" -ge "${STALL_MINUTES}" ] || continue
+
+              # CLEAN means GitHub itself considers every requirement satisfied:
+              # approved, checks passing, not behind, protection met. A PR in any
+              # other state is waiting on something real - a review, a failing
+              # check, a conflict - and is none of this workflow's business.
+              if [ "${state}" != "CLEAN" ] || [ "${mergeable}" != "MERGEABLE" ]; then
+                echo "${repo}#${number}: ${age_min}m old, state=${state} mergeable=${mergeable} - waiting on something real, left alone"
+                continue
+              fi
+
+              case "${method}" in
+                SQUASH) flag="--squash" ;;
+                REBASE) flag="--rebase" ;;
+                MERGE)  flag="--merge" ;;
+                *)
+                  echo "::warning::${repo}#${number}: unrecognised merge method '${method}', skipping."
+                  continue
+                  ;;
+              esac
+
+              echo "::warning::${repo}#${number} was ready ${age_min}m ago and auto-merge did not fire; merging it."
+              if gh pr merge "${number}" --repo "${ORG}/${repo}" "${flag}" --delete-branch; then
+                unstuck=$((unstuck + 1))
+                notify "${repo}" "${number}" "Merged by unstick-auto-merge (${method})."
+                echo "- **${repo}#${number}** merged after ${age_min}m stalled (${method})" >> "${GITHUB_STEP_SUMMARY}"
+              else
+                echo "::error::${repo}#${number}: merge failed. Needs a human."
+                notify "${repo}" "${number}" ":rotating_light: Merge FAILED - needs a human."
+                echo "- **${repo}#${number}** merge FAILED after ${age_min}m - needs a human" >> "${GITHUB_STEP_SUMMARY}"
+              fi
+
+            done < <(gh pr list --repo "${ORG}/${repo}" --state open --limit 50 \
+              --json number,createdAt,autoMergeRequest,mergeStateStatus,mergeable \
+              --jq '.[] | select(.autoMergeRequest != null)
+                    | [.number, .createdAt, .autoMergeRequest.mergeMethod,
+                       .mergeStateStatus, .mergeable] | @tsv' 2>/dev/null || true)
+          done
+
+          echo "Checked ${checked} auto-merge PR(s) across ${ORG}."
+
+          if [ "${unstuck}" -gt 0 ]; then
+            {
+              echo
+              echo "Auto-merge failed to fire on ${unstuck} PR(s), now merged."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            # Deliberately fails so the run sends a notification. Nothing is
+            # broken - the merge succeeded - but GitHub dropping a merge is
+            # abnormal and worth knowing about. At roughly 1 in 28 there is no
+            # alert fatigue risk, and a silent fix would leave the frequency
+            # unmeasured, which is how this went unnoticed in the first place.
+            echo "::error::Unstuck ${unstuck} PR(s) that auto-merge failed to merge."
+            exit 1
+          fi
+
+          echo "Nothing stalled." >> "${GITHUB_STEP_SUMMARY}"
