@@ -1,0 +1,42 @@
+name: Lint
+
+# actionlint alone is enough here. It checks workflow syntax and runs ShellCheck
+# over every `run:` block, and every line of shell in this repository lives in a
+# `run:` block in a workflow - unstick-auto-merge.yml is ~150 lines of it,
+# previously checked by nothing at all.
+#
+# actions-workflows needs a second tool because its shell sits in composite
+# action metadata, which actionlint explicitly does not check. There is no
+# composite action here, so that gap does not apply.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # Not SHA-pinned: ticket 011's rule is to pin git-checkout only where
+      # Dependabot watches it, and this repository has no dependabot.yml. An
+      # unwatched pin goes stale silently, which is worse than a moving tag.
+      - name: Checkout
+        uses: lite-actions/git-checkout@v1
+
+      # Pinned rather than `latest`: a floating tool version can start failing a
+      # pull request with no commit behind it. Bounded because a check that
+      # hangs blocks rather than fails - ticket 019.
+      - name: Install actionlint
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          curl -sSfL -o download-actionlint.bash \
+            https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash
+          bash download-actionlint.bash 1.7.12 .
+          rm -f download-actionlint.bash
+
+      - name: actionlint
+        run: ./actionlint -color

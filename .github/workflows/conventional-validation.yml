@@ -1,0 +1,25 @@
+name: Conventional Validation
+
+# Pull requests only. Validation exists to gate a pull request; dispatched by
+# hand there is nothing to gate.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: lite-actions/git-checkout@v1
+        with:
+          fetch-depth: 0
+
+      # The shared definition, which also carries the Dependabot skip. This
+      # repository has no dependabot.yml today, so that costs nothing and
+      # covers it if one is ever added.
+      - name: Validate conventional commits & branch
+        uses: lite-actions/actions-workflows/conventional-validation@v1
