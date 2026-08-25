@@ -1,0 +1,5 @@
+# Code owners for this repository.
+# Owners must have write access for their review to count toward branch protection.
+
+# Default owners for everything in the repo.
+*       @mrdoodles @MrDClaudeBot
