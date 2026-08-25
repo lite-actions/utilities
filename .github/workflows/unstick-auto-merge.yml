@@ -55,7 +55,7 @@ jobs:
           GH_TOKEN: ${{ secrets.CHANGELOG_BOT_TOKEN }}
           # Optional. With no webhook the workflow still unsticks PRs; it just
           # cannot tell anyone beyond the run log and the failed run.
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          AUTOMERGE_FAILURES_WEBHOOK: ${{ secrets.AUTOMERGE_FAILURES_WEBHOOK }}
           ORG: lite-actions
           # Normal is 12-29 seconds, so the default is ~30x the observed maximum.
           STALL_MINUTES: ${{ inputs.stall-minutes || '15' }}
@@ -122,8 +122,8 @@ jobs:
               ready_line="unknown"
             fi
 
-            if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-              echo "SLACK_WEBHOOK_URL not set; skipping notification for ${repo}#${number}."
+            if [ -z "${AUTOMERGE_FAILURES_WEBHOOK:-}" ]; then
+              echo "AUTOMERGE_FAILURES_WEBHOOK not set; skipping notification for ${repo}#${number}."
               return 0
             fi
 
@@ -144,7 +144,7 @@ jobs:
             # like a silent failure should not have that property itself.
             if jq -n --arg t "${text}" '{text: $t}' \
                  | curl -sf -X POST -H 'Content-type: application/json' \
-                   --data @- "${SLACK_WEBHOOK_URL}" >/dev/null; then
+                   --data @- "${AUTOMERGE_FAILURES_WEBHOOK}" >/dev/null; then
               echo "Slack notified for ${repo}#${number} (ready since ${ready_line})."
             else
               echo "::warning::Slack notification failed for ${repo}#${number}."
