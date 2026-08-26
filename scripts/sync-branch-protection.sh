@@ -7,6 +7,10 @@
 # branch protection requires admin, not just write, so there is no cheaper
 # read-only credential.
 #
+# Intended to be run locally, from a machine whose `gh` auth is already admin.
+# The dispatch workflow that wraps it is inert on purpose - no admin token is
+# stored anywhere in the org. See ENGINEERING-NOTES "Tokens and secrets".
+#
 # Usage:
 #   scripts/sync-branch-protection.sh [--apply] [repo ...]
 #   SPEC=other.yml ORG=other-org scripts/sync-branch-protection.sh
