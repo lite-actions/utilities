@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file,
 grouped by push and referenced by short commit SHA.
 
+## 2026-08-26 ([9fcbc68](https://github.com/lite-actions/utilities/commit/9fcbc68e4ad6f42acf34a79eab943c5358ec99ee))
+
+### Features
+
+- sync branch protection from a spec ([6e31078](https://github.com/lite-actions/utilities/commit/6e3107826cac7689ba29864dd45f2f49459edede))
+
 ## 2026-08-25 ([de1a185](https://github.com/lite-actions/utilities/commit/de1a185edb82ddce1e7d613cbfd0e9e6c219e0bb))
 
 ### Other Changes
