@@ -1,0 +1,32 @@
+# Desired branch protection for the lite-actions repositories.
+#
+# This file is the intent; scripts/sync-branch-protection.sh is the mechanism.
+# A repository absent from `repos` is not managed - private repositories on the
+# Free plan cannot have branch protection at all, so engineering and
+# versioning-tests are deliberately not listed.
+#
+# Required checks differ per repository because the jobs differ. Everything
+# else is uniform, and drift in the uniform part is what this exists to catch.
+
+defaults:
+  strict: true
+  enforce_admins: true
+  required_approving_review_count: 1
+  dismiss_stale_reviews: true
+  require_code_owner_reviews: true
+  require_last_push_approval: true
+  required_conversation_resolution: true
+  required_linear_history: false
+  allow_force_pushes: false
+  allow_deletions: false
+  required_signatures: true
+
+repos:
+  actions-workflows: [validate, lint]
+  conventional-changelog: [validate, lint, test]
+  conventional-validator: [validate, lint, test]
+  git-checkout: [lint, e2e, "test (ubuntu-latest)", "test (macos-latest)", validate]
+  release-notes: [validate, lint, test]
+  rust-release: [validate, lint, test]
+  signed-commit: [validate, lint, test]
+  utilities: [lint, validate]
