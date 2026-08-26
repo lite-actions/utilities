@@ -1,11 +1,27 @@
 name: Branch protection
 
-# Manual only. Branch protection changes rarely and an unattended job that can
-# rewrite it across the org is a bigger risk than the drift it prevents - so
-# this runs when someone asks, never on a schedule.
+# INERT BY DESIGN. PROTECTION_ADMIN_TOKEN is deliberately never created, so this
+# workflow cannot run. Decided 2026-08-26; see ENGINEERING-NOTES "Tokens and
+# secrets".
 #
-# Default mode is `check`, which is read-only and fails on drift. `apply` writes
-# the spec. The script refuses either way if the spec would weaken the org.
+# Run scripts/sync-branch-protection.sh from a laptop instead - it uses your own
+# gh auth, which is already admin. This workflow's only advantage is triggering
+# from a phone, and that does not buy a stored credential which, if leaked,
+# could disable protection across the org and then permit any push.
+#
+# The risk is blast radius, not this repository being public: secrets are not
+# passed to fork pull requests, and merging here needs a review and a code-owner
+# approval. Making the repository private would cost more than it saves - the
+# auto-merge monitor runs */15, about 2,880 billed minutes a month against a
+# 2,000 allowance.
+#
+# Enable it only if a second maintainer makes it worth the trade, and then with
+# a fine-grained PAT limited to Administration on the managed repositories, with
+# an expiry - not a classic repo token.
+#
+# Manual only either way. Default mode is `check`, which is read-only and fails
+# on drift. `apply` writes the spec. The script refuses either way if the spec
+# would weaken the org.
 on:
   workflow_dispatch:
     inputs:
