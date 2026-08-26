@@ -1,0 +1,58 @@
+name: Branch protection
+
+# Manual only. Branch protection changes rarely and an unattended job that can
+# rewrite it across the org is a bigger risk than the drift it prevents - so
+# this runs when someone asks, never on a schedule.
+#
+# Default mode is `check`, which is read-only and fails on drift. `apply` writes
+# the spec. The script refuses either way if the spec would weaken the org.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "check reports drift and fails; apply corrects it."
+        required: true
+        default: check
+        type: choice
+        options: [check, apply]
+      repos:
+        description: "Space-separated repositories. Empty means every repo in the spec."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-protection
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: lite-actions/git-checkout@v1
+
+      # Reading branch protection needs admin on the repository, not write, so
+      # the changelog bot's token cannot do this - it is a write collaborator.
+      # This is the only credential in the org with that reach, which is why the
+      # workflow is dispatch-only and the job below is the whole of its use.
+      - name: Check or apply
+        env:
+          GH_TOKEN: ${{ secrets.PROTECTION_ADMIN_TOKEN }}
+          MODE: ${{ inputs.mode }}
+          REPOS: ${{ inputs.repos }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::PROTECTION_ADMIN_TOKEN is not set. It needs a token with admin on the managed repositories; reading branch protection requires admin, not write."
+            exit 1
+          fi
+          flag=""
+          if [ "${MODE}" = "apply" ]; then
+            flag="--apply"
+          fi
+          # REPOS is deliberately unquoted so a space-separated list splits.
+          # shellcheck disable=SC2086
+          bash scripts/sync-branch-protection.sh ${flag} ${REPOS}
