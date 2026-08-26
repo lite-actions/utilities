@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file,
 grouped by push and referenced by short commit SHA.
 
+## 2026-08-26 ([09e550a](https://github.com/lite-actions/utilities/commit/09e550af0787fa2ddb07511789cfe47099b8dae0))
+
+### Other Changes
+
+- record that the admin token is deliberately never created ([27c3263](https://github.com/lite-actions/utilities/commit/27c3263cff194f2ecd9faa8b9ec5075308af6a3e))
+
 ## 2026-08-26 ([9fcbc68](https://github.com/lite-actions/utilities/commit/9fcbc68e4ad6f42acf34a79eab943c5358ec99ee))
 
 ### Features
