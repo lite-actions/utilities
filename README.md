@@ -3,11 +3,15 @@
 Keeping the `lite-actions` org's own house in order — the work that acts *on*
 the org rather than shipping anything from it.
 
-**There is nothing here to consume.** Every other public repository in the org ships an
-action that can be used via `uses:`. This repository ships nothing but provides— it runs things *on* the org.
-It exists so that automation about the org does not have to live in a repository
-of shared actions, which is where the auto-merge monitor started and did not
-belong.
+**There is nothing here to consume.** Every other repository in the org ships an
+action you can `uses:`; this one ships nothing. It exists so that work about the
+org does not have to live in a repository of shared actions, which is where the
+auto-merge monitor started and did not belong.
+
+The name is deliberate. `utilities` was a junk drawer — its own description read
+"General utilities that don't belong elsewhere", which is an admission.
+*Housekeeping* says maintenance-of-our-own-house and sets no expectation of
+something to consume, which is the defining fact about this repository.
 
 ## What runs here
 
